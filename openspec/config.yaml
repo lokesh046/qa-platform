@@ -1,0 +1,37 @@
+schema: spec-driven
+githubCopilot:
+  cloudAgent: false
+
+context: |
+  This repository is an internal QA automation platform. A QA engineer talks to
+  it through GitHub Copilot Chat, which calls an MCP server, which calls a
+  FastAPI backend.
+
+  Constraints that are not visible in the code:
+
+  - The MCP server is a gatekeeper and must stay one. It authenticates,
+    validates arguments, writes an audit record and forwards. Business logic
+    belongs in the backend, because the MCP server is the only process a
+    language model can reach. See docs/decisions/ADR-003 and ADR-014.
+  - Every significant technical decision gets an ADR in docs/decisions/, and
+    every step of work gets a log in docs/progress/. A step is not finished
+    until its documentation is written.
+  - Secrets are read from the environment only. Never put one in code, a log,
+    a document or a commit. Never log a token, a password, a header or a
+    request body.
+  - Pydantic input models reject unknown fields. Settings is the one exception.
+  - Each implemented module under app/modules/ has router.py, service.py,
+    schemas.py and repository.py. Routers stay thin.
+  - The schema is PostgreSQL-specific on purpose (generated columns, JSONB,
+    partial indexes, ON CONFLICT). Do not propose SQLite for tests.
+  - Tests under tests/unit must run with no database, no Redis, no network and
+    no .env file. See docs/decisions/ADR-018.
+  - Phases 3 to 5 (DSPy test generation, LangGraph workflows, Playwright
+    execution, Jira write-back) are not built yet. Their module folders are
+    empty by design.
+
+rules:
+  proposal:
+    - State what is out of scope, not only what is in scope.
+  tasks:
+    - Every task that changes behaviour names the test that proves it.

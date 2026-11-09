@@ -2,6 +2,18 @@
 
 One line per step, newest first.
 
+- 2026-11-09 — Step 09: OpenSpec installed and its role settled. `openspec
+  init --tools claude,github-copilot` created `openspec/` plus 24 agent
+  instruction files, and `specs/openspec/` was deleted as a duplicate of it.
+  Investigation first, because it changed the design: OpenSpec is a workflow
+  for AI coding agents with no `generate` command and no LLM dependency, so it
+  cannot turn a ticket into requirements — a model does that, and the CLI only
+  manages the files. It is therefore a development and CI dependency, never
+  called from an HTTP request, and Node stays out of the Docker image
+  (ADR-019). ADR-020 settles Phase 2's model: `claude-sonnet-5-5` as a
+  configured default, prompts as versioned files, the provider mocked in tests.
+  No application code changed.
+
 - 2026-11-09 — Version control and first real Jira connection. The repository
   was initialised (`git init -b main`) after eight steps of untracked work, and
   Phase 1 was committed as one commit; `.gitignore` already excluded `.env` and
