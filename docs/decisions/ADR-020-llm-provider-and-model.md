@@ -1,7 +1,7 @@
 # ADR-020: Anthropic Claude Sonnet 5.5, configured not hardcoded
 
 Date: 2026-11-09
-Status: Accepted
+Status: Accepted (the specific provider is reopened; see ADR-021 and ADR-022)
 
 ## Context
 
