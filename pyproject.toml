@@ -1,0 +1,101 @@
+[project]
+name = "qa-platform"
+version = "0.1.0"
+description = "Internal AI QA Automation Platform: FastAPI backend plus a thin MCP gatekeeper server."
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    # Web framework and validation
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    # Persistence
+    # [asyncio] pulls in greenlet, which SQLAlchemy's async engine requires.
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14.0",
+    "psycopg[binary]>=3.2.0",
+    # Cache and queue backend
+    "redis>=5.2.0",
+    # Outbound HTTP (Jira REST API, MCP server -> backend)
+    "httpx>=0.28.0",
+    # Official Python MCP SDK (provides FastMCP)
+    # 2.x renamed FastMCP to MCPServer and changed several APIs; see ADR-015.
+    "mcp>=2.3.0",
+    "email-validator>=2.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.22.0",
+    "ruff>=0.8.0",
+]
+
+[tool.uv]
+# This repository is an application, not a distributable library, so uv installs
+# the dependencies into .venv without building the project itself.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "N",    # pep8 naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RET",  # return style
+    "PTH",  # use pathlib
+    "TID",  # tidy imports
+    "ARG",  # unused arguments
+    "ANN",  # type annotations required
+    "D",    # docstrings
+    "S",    # bandit security checks
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "D100",  # module docstring not required
+    "D104",  # package docstring not required
+    "D203",  # conflicts with D211
+    "D213",  # conflicts with D212
+    "ANN401",  # allow typing.Any where a wrapper genuinely needs it
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+# A test file has different rules, and these four are the only relaxations:
+#   S101   assert is how a test asserts.
+#   D103   a test's name is its description; a docstring would repeat it.
+#   ANN201 every test returns None, so annotating it says nothing.
+#   ARG001 a fixture requested for its side effect (a stub installed, a route
+#          registered) is used, even though the parameter is never read.
+#   S105/6 every credential in a test is fake by construction. The real guard
+#          against a secret in the suite is that nothing here reads .env; see
+#          tests/conftest.py.
+"tests/**" = ["S101", "D103", "ANN201", "ARG001", "S105", "S106"]
+"migrations/**" = ["D", "ANN", "E501"]
+
+[tool.ruff.format]
+quote-style = "double"

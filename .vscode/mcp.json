@@ -1,0 +1,48 @@
+{
+  "// About this file": [
+    "Registers the QA platform MCP server with GitHub Copilot Chat in Agent mode.",
+    "VS Code starts the process itself and speaks to it over stdio, so this is a",
+    "separate instance from the 'mcp' container in docker-compose.yml.",
+    "",
+    "Before it will work:",
+    "  1. the backend must be running   -> docker compose up -d api",
+    "  2. you must exist as a user      -> docker compose exec api python -m app.cli add-user --email you@example.com --name 'Your Name'",
+    "  3. you must hold a project grant -> docker compose exec api python -m app.cli grant-access --email you@example.com --project ABC",
+    "",
+    "Then open Copilot Chat, switch to Agent mode, and ask: what are the",
+    "acceptance criteria for ABC-123?"
+  ],
+
+  "inputs": [
+    {
+      "id": "internal-api-token",
+      "type": "promptString",
+      "description": "INTERNAL_API_TOKEN from your .env. VS Code stores it in its secret storage, not in this file.",
+      "password": true
+    },
+    {
+      "id": "actor-email",
+      "type": "promptString",
+      "description": "Your work email. The platform checks your project access against it and records it in the audit trail.",
+      "password": false
+    }
+  ],
+
+  "servers": {
+    "qa-platform": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "-m", "mcp_server.server"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "BACKEND_BASE_URL": "http://127.0.0.1:8000",
+        "LOG_LEVEL": "INFO",
+
+        "// Never hardcode these two": "both are prompted for and kept in VS Code secret storage",
+        "INTERNAL_API_TOKEN": "${input:internal-api-token}",
+        "QA_ACTOR_EMAIL": "${input:actor-email}"
+      }
+    }
+  }
+}

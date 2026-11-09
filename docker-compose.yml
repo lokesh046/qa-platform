@@ -1,0 +1,160 @@
+# Local development stack.
+#
+# Values come from .env (copy .env.example first). Service-to-service hostnames
+# are overridden here, because .env holds the localhost variants so the same
+# file works when you run the API from your shell with `uv run`.
+#
+# Object storage is deliberately absent: nothing stores an artifact before
+# Phase 3, and MinIO's images are no longer publicly pullable.
+# See docs/decisions/ADR-005-object-storage-deferred.md.
+#
+# Start everything:        docker compose up -d
+# Infrastructure only:     docker compose up -d postgres redis
+# Follow the API log:      docker compose logs -f api
+# Stop and keep data:      docker compose down
+# Stop and wipe data:      docker compose down -v
+
+name: qa-platform
+
+services:
+  # -------------------------------------------------------------------------
+  # PostgreSQL: users, project access, cached Jira issues, jobs, audit log.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      # Deterministic initdb, so collation-dependent ordering matches CI.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      # Host port only, for psql and for running the API outside compose.
+      # Override POSTGRES_HOST_PORT in .env if 5432 is already taken.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [qa-net]
+
+  # -------------------------------------------------------------------------
+  # Redis: Jira response cache now, job queue from Phase 4.
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly keeps the queue across restarts once Phase 4 uses it.
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    ports:
+      # Override REDIS_HOST_PORT in .env if 6379 is already taken, for example
+      # by a Homebrew redis-server.
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [qa-net]
+
+  # -------------------------------------------------------------------------
+  # The FastAPI backend. All business logic lives here.
+  # Needs app/main.py, which Step 4 adds.
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # In-network addresses. These win over the localhost values in .env.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
+    volumes:
+      # Bind mount for local development. /opt/venv is outside this path, so
+      # the installed dependencies are not shadowed.
+      - ./app:/srv/app/app:ro
+      - ./migrations:/srv/app/migrations:ro
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [qa-net]
+
+  # -------------------------------------------------------------------------
+  # The MCP gatekeeper, in HTTP transport.
+  #
+  # Copilot Chat on your machine talks to a stdio instance started from
+  # .vscode/mcp.json (Step 8), not to this container. This container exists so
+  # the stack is complete and so remote MCP clients have something to reach.
+  # See docs/decisions/ADR-004-mcp-transport.md.
+  # Needs mcp_server/server.py, which Step 7 adds.
+  # -------------------------------------------------------------------------
+  mcp:
+    build:
+      context: .
+      target: mcp
+    restart: unless-stopped
+    # Deliberately NO env_file here, unlike the api service.
+    #
+    # `env_file: .env` injects every variable in that file into the container,
+    # including DATABASE_URL, POSTGRES_PASSWORD and JIRA_API_TOKEN. The
+    # gatekeeper needs none of them, and the reason it runs as a separate
+    # process is that compromising it should not reach the data. So the
+    # variables are listed one at a time, interpolated from .env by Compose
+    # rather than handed to the process wholesale.
+    #
+    # Adding a variable here is a decision. Adding one to .env is not.
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8765"
+      # The backend as seen from inside the compose network.
+      BACKEND_BASE_URL: http://api:8000
+      BACKEND_TIMEOUT_SECONDS: ${BACKEND_TIMEOUT_SECONDS:-15}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?set INTERNAL_API_TOKEN in .env}
+      # QA_ACTOR_EMAIL is intentionally absent: on the http transport every
+      # request carries its own X-Actor-Email header, and a process-wide
+      # identity here would attribute every call to one person. See ADR-014.
+    ports:
+      - "127.0.0.1:${MCP_HOST_PORT:-8765}:8765"
+    volumes:
+      - ./mcp_server:/srv/app/mcp_server:ro
+      # mcp_server imports app.core.logging and app.models for the shared
+      # issue-key pattern, so the same bind mount the api service uses keeps
+      # both processes on identical code during development.
+      - ./app:/srv/app/app:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [qa-net]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  qa-net:
+    driver: bridge
