@@ -22,6 +22,7 @@ from app.core.database import dispose_engine
 from app.core.errors import register_exception_handlers
 from app.core.logging import RequestIdMiddleware, configure_logging
 from app.core.redis import close_redis
+from app.llm.client import close_http_client as close_llm_http_client
 from app.modules.audit.router import router as audit_router
 from app.modules.health.router import router as health_router
 from app.modules.jira.client import close_http_client
@@ -71,10 +72,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine is lazy, ``/ready`` reports the truth, and the orchestrator holds
     traffic back until it passes.
 
-    Shutdown releases the database pool, the Redis pool and the Jira HTTP
-    pool. Without it, a reload leaves connections open until the other side
-    times them out, which during rapid development can exhaust Postgres's
-    ``max_connections``.
+    Shutdown releases the database pool, the Redis pool and both outbound
+    HTTP pools (Jira and the model provider). Without it, a reload leaves
+    connections open until the other side times them out, which during rapid
+    development can exhaust Postgres's ``max_connections``.
     """
     _log_startup_summary(app.state.settings)
     try:
@@ -83,6 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
         await close_redis()
         await close_http_client()
+        await close_llm_http_client()
         _logger.info("application stopped")
 
 

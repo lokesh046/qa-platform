@@ -106,6 +106,28 @@ class Settings(BaseSettings):
     # --- Internal auth (see ADR-003) ---------------------------------------
     internal_api_token: SecretStr
 
+    # --- Model access for BRD generation (see ADR-023) ---------------------
+    # An OpenAI-compatible chat-completions endpoint. The default is GitHub
+    # Models, which every GitHub account can reach, rate limited, at no cost.
+    # Changing provider is a change to these three values and nothing else.
+    llm_base_url: str = "https://models.github.ai/inference"
+
+    #: Deliberately no default. GitHub Models names models by publisher and the
+    #: catalogue changes, so a default would be a guess. List them with
+    #: GET https://models.github.ai/catalog/models
+    llm_model: str | None = None
+
+    #: A GitHub fine-grained token scoped models:read, for the default
+    #: provider. Not the OAuth app secret, and not the Jira token.
+    llm_api_key: SecretStr | None = None
+
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    llm_max_tokens: int = Field(default=4096, ge=256, le=32768)
+
+    #: Retries are for a timeout, a connection failure, a 429 or a 5xx only.
+    #: A 4xx is a request this code built wrongly and will build wrongly again.
+    llm_max_retries: int = Field(default=2, ge=0, le=5)
+
     # -----------------------------------------------------------------------
     # Validators
     # -----------------------------------------------------------------------
@@ -123,6 +145,21 @@ class Settings(BaseSettings):
         if len(value) > 1 and value.endswith("/"):
             raise ValueError("API_V1_PREFIX must not end with '/'")
         return value
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def _check_llm_base_url(cls, value: str) -> str:
+        """Require an absolute http(s) URL and strip any trailing slash.
+
+        The client appends ``/chat/completions``, so a trailing slash here
+        produces a double slash that some gateways route and others 404.
+        """
+        candidate = value.strip().rstrip("/")
+        if not candidate.startswith(("http://", "https://")):
+            raise ValueError("LLM_BASE_URL must start with http:// or https://")
+        if not candidate.split("://", 1)[1]:
+            raise ValueError("LLM_BASE_URL has no host")
+        return candidate
 
     @field_validator("database_url")
     @classmethod
@@ -229,11 +266,23 @@ class Settings(BaseSettings):
             "JIRA_API_TOKEN": self.jira_api_token.get_secret_value(),
             "INTERNAL_API_TOKEN": self.internal_api_token.get_secret_value(),
         }
+        if self.llm_api_key is not None:
+            candidates["LLM_API_KEY"] = self.llm_api_key.get_secret_value()
         return [
             name
             for name, value in candidates.items()
             if any(marker in value.lower() for marker in _PLACEHOLDER_MARKERS)
         ]
+
+    @property
+    def generation_available(self) -> bool:
+        """True when BRD generation has everything it needs.
+
+        Generation is optional: the backend starts and serves Phase 1 without
+        it, and only the BRD endpoints refuse (ADR-023). Checking it here keeps
+        the "is it configured" rule in one place rather than in each caller.
+        """
+        return bool(self.llm_model and self.llm_api_key)
 
     @property
     def is_deployment(self) -> bool:

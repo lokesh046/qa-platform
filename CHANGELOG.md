@@ -2,6 +2,38 @@
 
 One line per step, newest first.
 
+- 2026-11-09 — Step 11: the model client and output validation. `app/llm/`
+  gained the only code in `app/` that talks to a model, and the validator that
+  decides whether a reply may be stored. ADR-023 settles the provider question
+  ADR-021 reopened: one OpenAI-compatible client with the base URL, model and
+  key as configuration, defaulting to GitHub Models — free, server-side, and no
+  new vendor to approve. Generation is optional: with `LLM_MODEL` unset the
+  backend starts and Phase 1 works, and only generation refuses, naming the
+  variable before it makes any network call. The client maps 404 onto "the
+  model name is wrong" and 429 onto its own error type, retries only a timeout,
+  a connection failure, a 429 or a 5xx, and exposes `was_truncated`, because a
+  cut-off requirements document looks complete. The validator handles what
+  models really do — a fence and preamble around the reply, a requirement with
+  no scenarios, a scenario with no THEN, an apology instead of a document — and
+  accepts an `## Open questions`-only answer, which the prompt asks for when a
+  ticket says too little. 99 new tests, 568 in total. 14 more names in the
+  test environment scrub list, because a developer's exported `LLM_API_KEY`
+  could otherwise have reached a test and `respx` does not intercept a host it
+  was not told about.
+
+- 2026-11-09 — Step 10: remote access, started and parked. ADR-022 designs the
+  MCP server as an OAuth 2.1 authorization server with dynamic client
+  registration, delegating the human login to GitHub, so the access token
+  carries a verified email instead of the caller asserting one in a header.
+  `mcp_server/tokens.py` implements the signing core — pure, no Redis, no HTTP
+  — with 36 tests, one per refusal path. The server was also registered with
+  Claude Code and verified end to end with no secret in the client config,
+  since `uv run --directory` lets it read `.env` itself. Parked there on
+  purpose: the remaining work buys access from browser-based chats only, and
+  desktop clients already work over stdio, which is safer by construction.
+  `MCP_AUTH_MODE` names the transitional mode so the compose stack keeps
+  working.
+
 - 2026-11-09 — Step 09: OpenSpec installed and its role settled. `openspec
   init --tools claude,github-copilot` created `openspec/` plus 24 agent
   instruction files, and `specs/openspec/` was deleted as a duplicate of it.

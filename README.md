@@ -414,6 +414,20 @@ picks a provider ([ADR-005](docs/decisions/ADR-005-object-storage-deferred.md)).
 | `BACKEND_BASE_URL` | mcp | Backend base URL as the MCP server sees it. Overridden in compose. |
 | `BACKEND_TIMEOUT_SECONDS` | mcp | Per-request timeout against the backend. |
 | `QA_ACTOR_EMAIL` | mcp | Your work email, used as the actor **only** on the stdio transport. Ignored on `http`, where each request carries its own `X-Actor-Email`, and not passed to the `mcp` container at all. See ADR-014. |
+| `LLM_BASE_URL` | app | OpenAI-compatible chat-completions endpoint. Defaults to GitHub Models. |
+| `LLM_MODEL` | app | Model name, e.g. a publisher-prefixed GitHub Models id. **No default** — list them with `curl https://models.github.ai/catalog/models`. Unset means BRD generation is unavailable; everything else still works. |
+| `LLM_API_KEY` | app | **Secret.** For the default provider, a GitHub fine-grained token scoped `models:read`. Not the OAuth app secret, not the Jira token. |
+| `LLM_TIMEOUT_SECONDS` | app | Per-request timeout against the model provider. |
+| `LLM_MAX_TOKENS` | app | Ceiling on a generated reply. |
+| `LLM_MAX_RETRIES` | app | Retries for a timeout, a connection failure, a 429 or a 5xx. Never for a 4xx. |
+| `MCP_AUTH_MODE` | mcp | `oauth` or `service_token`. `service_token` trusts the `X-Actor-Email` header, so it is for local use only. See ADR-022. |
+| `MCP_PUBLIC_URL` | mcp | Externally reachable base URL of the MCP server. Becomes the OAuth issuer. |
+| `GITHUB_CLIENT_ID` | mcp | GitHub OAuth app client id, for `oauth` mode. |
+| `GITHUB_CLIENT_SECRET` | mcp | **Secret.** GitHub OAuth app client secret. |
+| `MCP_TOKEN_SIGNING_KEY` | mcp | **Secret.** Signs the MCP server's own tokens. Per environment. |
+| `MCP_REDIS_URL` | mcp | Session state only: authorization codes and registered clients. |
+| `ACCESS_TOKEN_TTL_SECONDS` | mcp | Access token lifetime. Short, because a signed token cannot be revoked early. |
+| `REFRESH_TOKEN_TTL_SECONDS` | mcp | Refresh token lifetime. Must not be shorter than the access token's. |
 
 ## Documentation
 

@@ -70,6 +70,24 @@ _PROJECT_ENV_VARS = (
     "BACKEND_BASE_URL",
     "BACKEND_TIMEOUT_SECONDS",
     "QA_ACTOR_EMAIL",
+    # Model access (ADR-023). A developer with a real LLM_API_KEY exported
+    # would otherwise have it reach a test, and respx would not intercept a
+    # call to their own provider.
+    "LLM_BASE_URL",
+    "LLM_MODEL",
+    "LLM_API_KEY",
+    "LLM_TIMEOUT_SECONDS",
+    "LLM_MAX_TOKENS",
+    "LLM_MAX_RETRIES",
+    # Remote access and OAuth identity (ADR-022).
+    "MCP_AUTH_MODE",
+    "MCP_PUBLIC_URL",
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+    "MCP_TOKEN_SIGNING_KEY",
+    "MCP_REDIS_URL",
+    "ACCESS_TOKEN_TTL_SECONDS",
+    "REFRESH_TOKEN_TTL_SECONDS",
 )
 
 
@@ -153,6 +171,7 @@ def log_buffer() -> Iterator[io.StringIO]:
         root.removeHandler(handler)
         root.setLevel(previous_level)
 
+
 TEST_SIGNING_KEY = "mcp-token-signing-key-for-tests-0123456789"
 TEST_GITHUB_CLIENT_ID = "Iv1.test-client-id"
 TEST_GITHUB_CLIENT_SECRET = "github-oauth-app-secret-for-tests-0123456"
@@ -176,3 +195,24 @@ def make_oauth_settings(**overrides: Any) -> McpSettings:
     }
     values.update(overrides)
     return make_mcp_settings(**values)
+
+
+TEST_LLM_BASE_URL = "https://models.test-provider.invalid/inference"
+TEST_LLM_MODEL = "test-publisher/test-model"
+TEST_LLM_API_KEY = "llm-api-key-for-tests-0123456789abcdef"
+
+
+def make_llm_settings(**overrides: Any) -> Settings:
+    """Settings with document generation configured.
+
+    Separate from ``make_settings`` so that generation stays *off* by default.
+    It is an optional feature (ADR-023), and a test that exercises it should
+    have to say so rather than inherit it.
+    """
+    values: dict[str, Any] = {
+        "llm_base_url": TEST_LLM_BASE_URL,
+        "llm_model": TEST_LLM_MODEL,
+        "llm_api_key": TEST_LLM_API_KEY,
+    }
+    values.update(overrides)
+    return make_settings(**values)
