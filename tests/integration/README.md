@@ -48,3 +48,24 @@ dependency by design (ADR-007), and the error envelope and request-id
 middleware can be exercised against a throwaway `FastAPI` app. Those could
 live in `tests/unit` instead; they are listed here so the distinction stays
 deliberate rather than accidental.
+
+## A defect this directory would have caught
+
+Step 12 shipped a `MissingGreenlet` crash in `app/modules/brd/repository.py`
+that 591 unit tests missed. `brd_documents.project_key` is a `Computed` column
+and `created_at` is a server default, so SQLAlchemy expires both after every
+INSERT **and** every UPDATE; reading one afterwards triggers a lazy load, which
+async SQLAlchemy refuses. The unit tests stub the repository and build a
+detached object with every attribute set in Python, so the expiry never
+happens.
+
+The test that catches it is three lines against a real session:
+
+```python
+document = await repository.open_attempt(session, issue_key="SCRUM-1", ...)
+await repository.complete_attempt(session, document, markdown="...", ...)
+assert document.project_key == "SCRUM"   # raises MissingGreenlet without the fix
+```
+
+Which is the general shape of what belongs here: assertions about what the
+*database* does, made against the database.

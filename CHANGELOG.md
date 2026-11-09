@@ -2,6 +2,21 @@
 
 One line per step, newest first.
 
+- 2026-11-09 — Step 12 follow-up: verified end to end, and fixed what that
+  found. `models.github.ai` is unreachable from the development sandbox — every
+  request returns a four-byte `OK` with none of GitHub's headers — so the whole
+  path was exercised against a local OpenAI-compatible stub: a good document, an
+  apology instead of a document, a reply cut off mid-sentence, and a 401, each
+  producing the right status, the right row and the right audit reason, with
+  token usage kept on the failures. That surfaced a `MissingGreenlet` crash no
+  unit test could reach: `project_key` is a `Computed` column, so SQLAlchemy
+  expires it after every INSERT *and* every UPDATE, and reading it afterwards
+  triggers a lazy load that async SQLAlchemy refuses. The first fix was wrong in
+  a useful way — refreshing only after the insert made a reused document work
+  and a fresh generation still fail — so all three write paths now reload
+  through one helper. Third defect in this project found by a live call rather
+  than by the suite, and recorded as such in `tests/integration/README.md`.
+
 - 2026-11-09 — Step 12: the brd module. A Jira issue now becomes a stored
   requirements document: `brd_documents` with its migration, the module, and
   `POST /api/v1/brd` plus `GET /api/v1/brd/{issue_key}`. ADR-024 settles where

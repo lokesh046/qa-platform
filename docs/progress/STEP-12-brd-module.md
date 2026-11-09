@@ -148,6 +148,60 @@ SQL
 # ERROR: violates check constraint "ck_brd_documents_document_status_has_markdown"
 ```
 
+### Verified end to end against a local stand-in provider
+
+`models.github.ai` is unreachable from the development sandbox — every request
+to it, GET or POST, any path, returns a four-byte `OK` with two headers and
+none of GitHub's. So the whole path was exercised against a local
+OpenAI-compatible stub instead, with `LLM_BASE_URL` pointed at it. Real HTTP,
+the real database, real requests through the API; only the provider's words
+were fake.
+
+| Stub returns | Result |
+| --- | --- |
+| A good document | `ready`, 2 requirements, 3 scenarios, 1 open question, `project_key` computed by Postgres |
+| Prose ("I'd be happy to help!") | 502, `failed` row, reason `invalid_format`, **token usage kept** |
+| A reply cut off (`finish_reason: length`) | 502, `failed` row, reason `truncated`, usage kept |
+| 401 | 502 naming `LLM_API_KEY` and the `models:read` scope, `failed` row, reason `upstream_error` |
+| A document that already exists | returned unchanged, `reused_existing: true`, no provider call |
+
+That found a real bug, described next, which no unit test in this project could
+have caught.
+
+### The bug the live call found
+
+The first live generation stored its document and then returned a **500** from
+the response mapper:
+
+```
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+can't call await_() here. Was IO attempted in an unexpected place?
+  File "app/modules/brd/service.py", line 95, in _to_read
+    project_key=document.project_key,
+```
+
+`project_key` is a `Computed` column, so SQLAlchemy treats it as
+server-generated and **expires it after every INSERT and every UPDATE** — a
+computed value can change when its inputs do. Reading an expired attribute
+triggers a lazy load, and in async SQLAlchemy a lazy load raises rather than
+quietly working. `created_at`, a server default, has the same problem.
+
+The first fix was wrong in an instructive way: refreshing only after the insert
+in `open_attempt`. That made a *reused* document work and a *fresh* generation
+still fail, because `complete_attempt`'s UPDATE expires the column again. All
+three write paths now reload through one helper.
+
+The jira repository needs none of this, which is why the pattern looked safe:
+it uses a Core `INSERT ... ON CONFLICT ... RETURNING`, and that brings
+generated columns back with the statement. An ORM `add()` or an attribute
+mutation does not.
+
+**The unit tests could not have caught it.** They stub this repository
+entirely, and the stub builds a detached object with every attribute set in
+Python — which is precisely the gap ADR-018 records and
+`tests/integration/README.md` lists first. This is the third real defect in
+this project found by a live call rather than by the suite.
+
 ## Decisions and trade-offs
 
 **A document is a row, not a file.** ADR-024 in full. The Step 1 scaffold wanted
@@ -225,5 +279,8 @@ is the single thing in this codebase least worth duplicating.
   closes them. A generation killed mid-flight leaves a row that is pending
   forever.
 - **`GET /api/v1/brd/{issue_key}` can hit Jira.** See the trade-off above.
-- **Still no integration tests.** The constraint checks in this log were run by
-  hand, and the stub repository in the unit tests can drift from the real one.
+- **Still no integration tests, and this step is the strongest argument yet.**
+  The `MissingGreenlet` bug above was invisible to 591 passing unit tests and
+  took a live request to surface. The constraint checks in this log were run by
+  hand, and the stub repository can drift from the real one in exactly the way
+  that caused it.

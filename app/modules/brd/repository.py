@@ -68,6 +68,7 @@ async def open_attempt(
     )
     session.add(document)
     await session.flush()
+    await _reload_server_values(session, document)
     return document
 
 
@@ -100,6 +101,7 @@ async def complete_attempt(
     document.completion_tokens = completion_tokens
     document.finished_at = datetime.now(UTC)
     await session.flush()
+    await _reload_server_values(session, document)
     return document
 
 
@@ -129,4 +131,31 @@ async def fail_attempt(
     document.completion_tokens = completion_tokens
     document.finished_at = datetime.now(UTC)
     await session.flush()
+    await _reload_server_values(session, document)
     return document
+
+
+async def _reload_server_values(session: AsyncSession, document: BrdDocument) -> None:
+    """Load the columns Postgres fills, so the caller can read them.
+
+    Two of this table's columns are never written by Python: ``project_key`` is
+    a ``Computed`` column and ``created_at`` is a server default. SQLAlchemy
+    therefore treats them as server-generated and **expires them after every
+    INSERT and every UPDATE**, because a computed value can change when its
+    inputs do.
+
+    Reading an expired attribute triggers a lazy load, and in async SQLAlchemy
+    a lazy load raises ``MissingGreenlet`` instead of quietly working. So every
+    write path reloads explicitly. One extra SELECT, which is nothing next to
+    the model call that surrounds it.
+
+    Found the hard way: a live request returned a 500 from the response mapper
+    after the document had already been stored. The unit tests could not catch
+    it, because they stub this module entirely -- which is the gap ADR-018
+    records and `tests/integration/README.md` lists first.
+
+    The jira repository needs none of this: it uses a Core
+    ``INSERT ... ON CONFLICT ... RETURNING``, which brings generated columns
+    back with the statement. An ORM ``add()`` or attribute mutation does not.
+    """
+    await session.refresh(document)
