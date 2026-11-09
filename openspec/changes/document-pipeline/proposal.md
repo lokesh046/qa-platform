@@ -5,63 +5,85 @@
 The platform can turn one Jira issue into one BRD and then stops. The work it
 is meant to support is a chain: a free-text brief becomes a BRD, the BRD
 becomes an FSD, the FSD becomes a step procedure, and the step procedure
-becomes a set of Jira stories broken into tasks and subtasks. Each link is
-reviewed by a person, corrected, and kept as a version before the next link is
-drawn from it.
+becomes a set of proposed Jira stories broken into tasks and subtasks. Each
+link is read by a person, corrected, and kept as a version before the next
+link is drawn from it.
 
-Nothing in the platform supports that today. A generated document cannot be
-reviewed, cannot be corrected, has no revision anybody can see, and cannot be
-used as the input to the next document. The one generator that exists takes a
-Jira issue key, which is not where the chain starts.
+Two things are wrong today. Nothing supports that chain: a generated document
+cannot be reviewed, cannot be corrected, has no revision anybody can see, and
+cannot feed the next stage. And the thing a QA engineer would have to install
+is a platform — Postgres, Redis, a FastAPI service, a seeded user table, a
+model provider credential — to get a document written.
 
 The shape of the work matters more than any single stage. **"Generate → human
 verifies → changes → version" repeats identically at every link.** Built once,
-with the document type as a parameter, each new stage costs a type and a
-prompt. Built per stage, the platform acquires four nearly-identical review
-flows that drift apart, and four ways to lose somebody's correction.
+with the document type as a parameter, each new stage costs a type, a prompt
+and a validator.
+
+And the thing doing the generating is already in the room. The QA engineer is
+talking to Copilot, which has a model, has been given the ticket, and can
+write the document itself. The platform's job is not to own a model. It is to
+supply the context, say what shape the answer must take, refuse an answer that
+is the wrong shape, and keep every version.
 
 ## What Changes
 
-- **BREAKING: `POST /api/v1/brd` changes its input.** It takes a brief today's
-  callers do not have. A BRD is generated from a submitted brief, optionally
-  with Jira issues as additional context, rather than from an issue key. The
-  existing endpoint and its request schema are replaced.
-- **BREAKING: `brd_documents` becomes a general document table.** A document
-  gains a type (`brd`, `fsd`, `step_procedure`, `story_breakdown`), a link to
-  the document it was derived from, and a revision chain. The current table
-  holds one type and no lineage.
-- **A brief can be submitted** as free text and becomes the root of a chain.
-  Zero or more Jira issues may be attached as supporting context.
-- **A document can be generated from another document**, so the chain is
+- **BREAKING: the product becomes a single local MCP server.** Somebody adds
+  one entry to their MCP configuration and has the whole chain. No service to
+  deploy, no database to run, no tokens to paste.
+- **BREAKING: the HTTP API, Postgres, Redis and the shared service token leave
+  the product path.** `POST /api/v1/brd` and `GET /api/v1/brd/{issue_key}` are
+  removed rather than replaced. The backend code remains in the repository,
+  **explicitly marked retired**, for the later phase that needs unattended
+  execution.
+- **BREAKING: the platform stops owning a model.** The MCP client writes each
+  document; a tool validates the result and stores it. No `LLM_API_KEY`, no
+  provider cost, no provider outage. This is an ordinary tool call, not MCP
+  sampling, which ADR-021 rejected as deprecated and supported by roughly two
+  clients in twenty-four.
+- **BREAKING: the platform stops owning authorisation.** Each person signs in
+  to Jira in their own browser, and Jira enforces their own permissions. The
+  `users` and `user_project_access` tables, the service account and the
+  `X-Actor-Email` header are removed. ADR-002 called per-user OAuth "the right
+  long-term answer" and deferred it; this is it.
+- **Jira authentication is a browser login.** First use opens a consent page;
+  the refresh token lands in the operating system keychain and renews itself.
+- **State is a local SQLite database**, holding briefs, documents, revisions
+  and verification state for one person. Designed fresh — the Postgres schema
+  uses generated columns, JSONB, partial indexes and `ON CONFLICT`, none of
+  which port.
+- **A brief can be submitted** as free text and becomes the root of a chain,
+  optionally naming Jira issues as supporting context.
+- **A document can be generated from the document before it**, so the chain is
   `brief → BRD → FSD → step procedure → story breakdown`. Each stage refuses
-  to run until the document it derives from has been verified by a person.
-- **A document can be verified, rejected or edited by a person**, and every
-  edit creates a new revision recording who changed it, when, and what changed.
-  Nothing is overwritten and nothing is deleted.
+  until the document it derives from has been verified by a person.
+- **A person verifies, rejects or corrects a document**, and every correction
+  becomes a revision recording who, when and what. Nothing is overwritten.
 - **A delivery phase label travels down the chain.** Phase 1 and Phase 2
-  describe the product being specified, not this platform's roadmap, so a
-  requirement marked Phase 2 in the FSD produces Phase 2 steps and Phase 2
-  stories.
-- **A story breakdown is a document, not a Jira write.** It proposes stories
-  with their tasks and subtasks for a person to act on. The platform creates
-  nothing in Jira.
-- **MCP tools** for the stages a QA engineer drives from Copilot Chat or Claude
-  Code, so the chain is usable without touching the HTTP API directly.
+  describe the product being specified, so a requirement marked Phase 2 in the
+  FSD produces Phase 2 steps and Phase 2 stories.
+- **A story breakdown is a document, not a Jira write.** Nothing is created in
+  Jira.
 
 ## Capabilities
 
 ### New Capabilities
 
+- `jira-authentication`: signing a person in to Jira from a desktop tool,
+  keeping the token where the operating system keeps secrets, renewing it
+  silently, and asking again when renewal fails.
+- `local-store`: the single-user store that holds briefs, documents, revisions
+  and verification state, and what is guaranteed about where it lives and what
+  it keeps.
 - `brief-intake`: accepting and storing the free-text brief that starts a
   chain, bounding it, and attaching optional Jira issues as context. The only
   capability whose content comes from a person rather than a model.
-- `document-generation`: producing a document of a given type from the document
-  before it in the chain, validating the result against the shape that type
-  requires, carrying the delivery phase label forward, and recording what the
-  attempt cost.
-- `document-lifecycle`: the states a document moves through, who may verify or
-  reject one, how an edit becomes a revision, and what "the current version of
-  this document" means. The wrapper every stage shares.
+- `document-generation`: supplying the client with the context and the shape a
+  stage requires, checking what comes back, carrying the delivery phase label
+  forward, and recording the lineage of every document.
+- `document-lifecycle`: the states a document moves through, how a person
+  verifies or rejects one, how a correction becomes a revision, and what "the
+  current version" means.
 
 ### Modified Capabilities
 
@@ -69,44 +91,47 @@ None. The project has no specs yet; these are the first.
 
 ## Impact
 
-**Affected code**
+**What a user installs**
 
-- `app/modules/brd/` — generalised from one document type to many. Its table,
-  schemas, repository, service and endpoints all change shape.
-- `app/models/brd_document.py` — becomes the general document model, plus new
-  models for briefs and revisions. Needs a migration that preserves the
-  existing CHECK constraints and adds the lifecycle ones.
-- `app/modules/approvals/` — currently an empty placeholder. Becomes the
-  verification half of `document-lifecycle`.
-- `app/llm/prompts/` — one prompt pair per document type, each versioned, each
-  recorded on the documents it produces.
-- `mcp_server/` — new tools. The gatekeeper rule holds: validate, audit,
-  forward, no business logic.
+One MCP server entry. On first use it opens a browser for Jira consent and
+creates its database. Nothing else.
 
-**Affected contracts**
+**What survives in the codebase**
 
-- `POST /api/v1/brd` is replaced. No external consumer exists yet, so the break
-  costs nothing now and would cost a migration later.
-- `GET /api/v1/brd/{issue_key}` is replaced: a document is identified by its
-  own id and its chain, not by an issue key, now that an issue is optional.
+- `app/llm/openspec_format.py` — the validator. Pure, and the reason a wrongly
+  shaped document never reaches the store.
+- `app/modules/jira/adf.py` — Atlassian Document Format to text.
+- `app/modules/jira/client.py` — the Jira gateway, moving from HTTP Basic to
+  an OAuth bearer token.
+- `mcp_server/` — its structure, argument validation and error discipline.
+- `app/llm/prompts/` — repurposed as the instructions a tool returns to the
+  client, instead of prompts this platform sends to a provider.
+- The tests for all of the above, and every ADR.
 
-**Preserved**
+**What is retired, and must be labelled as retired**
 
-- The access gate order — registered, active, holds a project grant, then
-  cache or Jira — is a security property and does not change. Every new
-  endpoint runs it before anything is generated or read.
-- ADR-024's decision that documents are database rows rather than files, and
-  that regeneration appends rather than overwrites.
-- Jira stays read-only.
+`app/main.py` and the FastAPI application, `app/modules/*/router.py`, the
+Postgres models and migrations, Redis, the product path through
+`docker-compose.yml`, the `users` and `user_project_access` tables,
+`audit_logs` as a shared trail, `app/core/security.py`'s service token, and
+`mcp_server/backend_client.py`.
+
+**What is lost**
+
+- **Unattended execution.** With no server and no queue, nothing runs unless a
+  person has an editor open. Phases 3 to 5 as originally conceived assumed
+  both.
+- **A shared audit trail.** A single-user local tool keeps a local record.
+  That is weaker, and on a tool nobody else can reach, much less necessary.
+- **Prompt control.** The client writes the document, so output varies with
+  the client and the model behind it. The validator constrains shape, not
+  quality.
 
 **Out of scope**
 
-- **Generating the Python test script** (stage 5 of the diagram). The least
-  defined stage, and it depends on the story breakdown existing first.
-- **Creating issues in Jira.** Stories are proposed as a document. Writing them
-  is a separate change, behind an approval gate, once the quality of generated
-  stories is known.
-- **Remote access and OAuth.** Started and parked in Step 10; unrelated to this.
-- **Git or pull-request review of documents.** Versioning is in the platform.
-- **Editing a document through a diff or merge UI.** An edit replaces the text
-  and creates a revision; reconciling two concurrent edits is not solved here.
+- Generating the Python test script (stage 5 of the use case).
+- Creating anything in Jira.
+- Remote or multi-user access, including the OAuth server work parked in
+  Step 10.
+- Making the retired backend work against the new model. It is kept, not
+  maintained.

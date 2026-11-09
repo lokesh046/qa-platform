@@ -2,203 +2,234 @@
 
 ## Context
 
-See proposal.md — Why. What exists today: `brd_documents` holds one document
-type keyed to a Jira issue key, with no lineage, no revisions and no review
-state; `app/llm/` has versioned prompt files, an OpenAI-compatible client and
-one validator for the OpenSpec Requirement/Scenario shape; the access gate
-order lives in `app/modules/jira/service.py` and every caller delegates to it.
+See proposal.md — Why. The architecture changed after the specs were first
+written, so this document describes a different system from the one the
+repository currently contains.
 
-Three constraints shape everything below.
+What exists and is reusable: a pure validator for the Requirement/Scenario
+shape, an ADF-to-text parser, a Jira HTTP client using Basic auth, an MCP
+server with argument validation and audit discipline, and versioned prompt
+files. What exists and is retired: a FastAPI application, five Postgres
+tables, Alembic migrations, Redis, a shared service token, and the
+`users`/`user_project_access` access model.
 
-- **The access model keys on a project.** A grant is `(user, project_key)`, and
-  until now the project came from the issue key. A chain that starts from a
-  brief has no issue key, so the project must come from somewhere else or the
-  whole authorisation model has a hole in it.
-- **`project_key` on `brd_documents` is a `Computed` column derived from the
-  issue key.** It cannot survive an optional issue.
-- **Documents are rows, not files** (ADR-024), and regeneration appends.
+Three facts constrain the design.
+
+- **Atlassian Cloud does not reliably support secretless PKCE** for public
+  clients. The feature request is open and the only reports of a hidden flag
+  are unverified, so a desktop client must carry a client secret.
+- **The Postgres schema does not port.** Generated columns, JSONB, partial
+  indexes and `ON CONFLICT` are all load-bearing in it.
+- **An MCP client can write files.** Both Copilot and Claude Code can. That
+  bounds what any file-based control can promise.
 
 ## Goals / Non-Goals
 
 **Goals**
 
-- One lifecycle implementation that every document type uses, so a fifth stage
-  costs a type, a prompt and a validator.
-- Lineage that is recoverable: from any document back to the brief, naming the
-  exact revision of each source it was built from.
-- Staleness that cannot drift out of date, because it is derived rather than
-  stored.
-- A migration that keeps the CHECK constraints already verified against
-  Postgres.
+- Installing the tool is adding one MCP entry; everything else happens on
+  first use.
+- One lifecycle implementation that every document type uses.
+- Lineage that names the exact source revision, so staleness is derived rather
+  than maintained.
+- The tool holds no model credential and no Jira credential of its own.
 
 **Non-Goals**
 
-- Concurrent editing. Two people correcting the same document is last-write-
-  wins plus a new revision each; no merge, no locking, no conflict detection.
-- A diff algorithm. A revision stores its full text; showing a diff is the
-  reader's problem.
-- Structured storage of document content. The markdown is what a person
-  approves and therefore what is stored, per ADR-024.
+- Multi-user anything. One person, one machine, one store.
+- Unattended execution. Nothing runs without a client connected.
+- Keeping the retired backend working. It is kept for reference, not
+  maintained against the new model.
+- Merging concurrent edits. Single user, so the case is rare rather than
+  solved.
 
 ## Decisions
 
-### A document's project comes from the brief, not from an issue key
+### The MCP server is the product; the backend is kept but labelled retired
 
-Every chain is rooted in a brief, the brief names its project, and every
-document in the chain inherits it. `project_key` stops being a generated
-column and becomes an ordinary column copied from the brief at creation.
+Everything a user touches is the stdio MCP server. The FastAPI application and
+its Postgres layer stay in the repository under a `RETIRED.md` that names what
+they were for, when they stopped being used, and what would have to be true to
+revive them.
 
-Alternatives considered. *Derive it from an attached Jira issue* — fails when
-no issue is attached, which is now the normal case. *Make the project optional
-and fall back to "any registered user may read"* — rejected outright: it turns
-the access model off for exactly the documents that contain the most
-distilled information about a project.
+The honest risk of "MCP first, backend later" is two divergent data models:
+SQLite that people use and Postgres that nobody runs, drifting apart until the
+Postgres one is fiction. The mitigation is labelling rather than discipline —
+its tests are not run in the default suite, and `RETIRED.md` says the schema
+describes a system that no longer exists.
 
-The cost is losing the generated column's guarantee that the key cannot drift
-from the issue key. A CHECK constraint that the project key matches the
-brief's is not expressible in table-local SQL, so this becomes a foreign key
-to the brief plus a service-level copy. That is weaker, and worth stating
-plainly.
+Alternative: *delete it*. Cleaner, and it throws away the only design that can
+ever run unattended, which Phase 3 onward will want. Rejected on that basis,
+with the cost stated rather than hidden.
 
-### One `documents` table with a type, not a table per type
+### The client writes the documents; a tool checks and stores them
 
-Every type shares the lifecycle, the lineage, the audit shape and the access
-rule; they differ only in their content and the validator applied to it. A
-table per type means four copies of the state machine and four migrations
-every time the lifecycle changes.
+Two operations per stage: one that returns the source content plus the
+instructions for the shape required, and one that accepts the drafted text,
+checks it and stores it. The model doing the writing is the one already in the
+user's conversation.
 
-Alternative: *a table per type with a shared lifecycle table pointing at them*
-— more faithful to the differing content, and it makes every lifecycle query a
-union of four. Rejected on the strength of how little actually differs.
+This is not MCP sampling. Sampling is a server-to-client request, deprecated
+in the 2026-07-28 protocol and implemented by roughly two clients in
+twenty-four (ADR-021). Here the client generates during its own turn and then
+calls an ordinary tool, which every client supports.
+
+What it costs: the prompt is no longer ours, so output varies with the client
+and the model behind it. The validator constrains **shape** — a requirement
+has scenarios, a scenario has an expected outcome, a phase label is in the
+form that can be read — and constrains **quality** not at all. A well-formed
+document about the wrong thing passes. Human verification is the only control
+on that, which is the argument for the lifecycle rather than an aside to it.
+
+### Jira: browser OAuth with an embedded client secret
+
+One Atlassian OAuth app, registered once. Its client id and secret ship with
+the tool. First use opens the consent page against a loopback redirect, the
+refresh token goes to the OS keychain, and renewal is silent.
+
+The embedded secret is extractable from any installation. That is accepted:
+the secret alone authorises nothing, because the flow still requires a human
+to consent in their own browser, and the redirect is loopback so an
+authorization code cannot be intercepted remotely. This is what every desktop
+OAuth client does, including `gh`.
+
+Alternatives. *Secretless PKCE* — correct, and unavailable on Atlassian Cloud
+today. *A hosted broker holding the secret* — removes the embedded secret and
+reintroduces a server to run, which is the thing this change exists to remove.
+*Per-user API tokens* — no registration and no secret, but it is the manual
+paste step this change is meant to delete.
+
+### Authorisation moves to Jira
+
+Per-user OAuth means Jira decides what each person may read. The `users`
+table, `user_project_access`, the service account and `X-Actor-Email` all go.
+
+This is a security improvement, not only a simplification: the previous model
+had one service account whose visibility was an upper bound on everything, and
+a shared token that let any caller assert any actor. Both are gone because
+neither exists any more.
+
+What is lost with them: the ability to grant someone access to a project in
+this platform that they do not have in Jira, and the ability to answer "who
+read what" across a team. Neither is meaningful for a single-user tool.
 
 ### A document is the identity; a revision holds the text
 
-Two different things both look like "a new version":
-
-- the model produced **another attempt** — a new `documents` row, new lineage,
-  its own cost;
-- a person **corrected** a document — a new `document_revisions` row on the
-  same document.
-
-Collapsing them loses the distinction between "we generated this twice" and
-"somebody fixed a sentence", which is precisely what the review trail is for.
-So `documents` holds identity, type, lineage, state and cost; `document_revisions`
-holds text, author, timestamp and note. A generated document starts with
-revision 1, authored by the platform.
-
-Alternative: *one table, every row a revision* — simpler to query, but then
-cost and lineage are attached to a revision that may be a human edit, and
-"which attempt did this come from" stops being answerable.
+Unchanged from the previous design, and the reasoning survives the
+architecture change. "The client wrote it again" is a new document with its
+own lineage; "a person fixed a sentence" is a new revision on the same
+document. Collapsing them loses the distinction the review trail exists for.
 
 ### Staleness is computed, never stored
 
-A derived document records the **source revision id** it was generated from.
-It is stale when that id is not the source's current revision id. No flag, no
-job to maintain it, and no way for it to be wrong.
+A derived document records the source **revision** it was written from. It is
+stale when that is not the source's current revision. No flag, no cascade, and
+nothing that can be wrong.
 
-Alternative: *a `stale` boolean updated when a source is edited* — needs a
-cascade on every edit, and the cascade is exactly the thing that will one day
-miss a row.
+### Verification is a watched review file, and it is a speed bump
 
-### Verification is not exposed as an MCP tool
+The tool writes the document to a review file in its own directory — not in
+the repository the editor has open — with a status line at the top. The person
+changes the status to verified or rejected, optionally edits the text, and
+saves. The tool applies the new text as a revision first, then the state, so
+somebody verifies what they actually read.
 
-Generating and reading are MCP tools. **Verifying and rejecting are not.** A
-tool is called by a model deciding what to do next, and the one thing the
-diagram insists on is that a person verifies each stage. A model that can
-verify will verify, because verification is the obstacle between it and the
-next stage.
+**This is not a security boundary, and the design should not pretend it is.**
+An agent with file-write access could edit that file. Three things make it
+reasonable anyway:
 
-Verification goes through the HTTP API, where the caller is a person acting
-deliberately. This is a deliberate reduction in convenience: a QA engineer
-cannot say "verify it and generate the FSD" in one sentence to Copilot.
+- There is no tool that verifies, so an agent must be *asked* to forge an
+  approval rather than wander into it while pursuing the next stage. That is
+  the failure mode worth preventing: a model that treats verification as an
+  obstacle between it and the next stage.
+- The file lives outside the workspace, so a repository-scoped agent does not
+  encounter it.
+- The person who could ask an agent to forge it is the person whose approval
+  it is.
 
-### Validation is a registry keyed by type
+Alternatives. *A CLI command* — genuinely unforgeable by a chat agent, and it
+makes you leave the conversation to approve something you just read in it.
+*A code printed to the terminal that the verify tool requires* — keeps the
+flow in chat, and is one copy-paste from being handed to the model, which
+makes it theatre. The file was chosen with the weakness accepted.
 
-`normalise()` — stripping fences and preamble — is shared. The shape check is
-per type: BRD and FSD use the existing Requirement/Scenario validator; a step
-procedure needs ordered steps; a story breakdown needs stories with tasks and
-subtasks. One lookup from type to validator, each returning the same report.
+### A fresh SQLite schema, not a port
 
-### The phase label is a line in the markdown, parsed by the validator
+Tables for briefs, documents, revisions and local records. No generated
+columns: the project key is written by the application and carried from the
+brief. No JSONB: the few structured fields are columns. No partial indexes.
+`ON CONFLICT` is not needed, because one process writes.
 
-`**Phase:** 2` directly under a requirement, step or story heading. Readable
-by a person in the document they are approving, and machine-checkable by the
-validator, which lifts it into counts on the row.
+The schema is created and upgraded on startup, with a version number in the
+file. A store written by a newer version is refused rather than written to —
+an old binary writing an old shape over new data is the one unrecoverable
+mistake available here.
 
-Alternative: *a structured JSON column alongside the markdown* — better for
-querying, and it means the approved text and the queried data can disagree.
-Rejected for the same reason ADR-024 rejected storing only the structure.
+ADR-018 forbade SQLite for *testing the Postgres schema*, because a suite
+passing against SQLite would prove the code works against a database the
+project does not use. A separate, deliberately simpler schema for a different
+product is not that, and this design note exists so the two are not confused.
 
-### Module layout: one module owns the aggregate
+### MCP tools, and what is deliberately absent
 
-`app/modules/documents/` owns briefs, documents, revisions, generation and the
-state transitions. `app/modules/brd/` is replaced by it.
+Present: submit a brief, read a brief, start a stage, store a drafted
+document, read a document, read a document's history, check authentication
+status, sign out.
 
-The scaffold reserved `app/modules/approvals/` for "a generated BRD waits here
-until a reviewer approves or rejects it", which is this. It is not used,
-because the state machine and the revisions are one aggregate: splitting them
-across two modules puts one table's invariants in two services, and the
-invariant "an edit returns a document to awaiting verification" would straddle
-the boundary. `approvals/` is left for Phase 3, where a *test run* waits for
-sign-off — a genuinely separate thing. Its README needs correcting to say so.
+Absent: anything that verifies, rejects or deletes. Deletion does not exist at
+all; verification exists only through the review file.
 
 ## Risks / Trade-offs
 
-**Editing a brief marks the entire chain stale** → Staleness is informational
-on read and blocking only on generation, so a stale chain is still fully
-readable and a user is told exactly which link to re-verify.
+**A model could be asked to forge an approval** → No verify tool exists, the
+review file is outside the workspace, and the design records this as accepted
+rather than solved. On a single-user tool, the person who could ask is the
+person approving.
 
-**Four stages multiply cost and rate limit** → One chain is four generations
-rather than one, against a free tier that is rate limited per model. Reuse is
-the default (regeneration must be asked for), cost is recorded per attempt
-including failures, and 429 is already its own error type rather than a
-generic failure.
+**Output consistency drops** → The client's prompt replaces ours. The
+validator rejects wrong shapes and cannot judge content; human verification is
+the control, and the chain refuses to advance without it.
 
-**Markdown as the carrier for phase labels is brittle** → A model that writes
-`Phase 2:` instead of `**Phase:** 2` loses the label. Mitigated by the
-validator rejecting content it cannot parse rather than silently dropping the
-phase, and by the prompt stating the exact form.
+**The embedded client secret is extractable** → It authorises nothing without
+a user consenting in their own browser, and the loopback redirect prevents
+remote interception of a code.
 
-**Losing the generated `project_key`** → The project key is now copied rather
-than derived, so a bug could write a document under the wrong project, which
-is an authorisation bug. Mitigated by a foreign key to the brief and by
-deriving the value in exactly one place; not fully mitigated, and it is the
-weakest point in this design.
+**Two data models drift** → `RETIRED.md`, and the retired tests are out of the
+default suite, so nobody mistakes a passing run for the backend still working.
 
-**Last-write-wins on concurrent edits** → Two people correcting the same
-document both get a revision, and the later one is current; the earlier is not
-lost, but it is not merged either. Acceptable while the reviewer set is small;
-revisit if it bites.
+**The store is a single file on one machine** → No backup, no sync, no
+recovery if the disk dies. It is portable by copying, and that is the whole of
+the story. Worth naming before somebody has eight weeks of documents in it.
 
-**A four-stage chain amplifies a bad prompt** → An error in the BRD propagates
-into the FSD, the steps and the stories. The verification gate between stages
-is the mitigation, and it only works if people actually read what they verify.
+**Nothing runs unattended** → Phases 3 to 5 assumed a server and a job queue.
+Playwright can run locally on demand from a tool, so the use case survives;
+scheduled or queued work does not.
+
+**A four-stage chain amplifies a bad first document** → An error in the BRD
+propagates into everything after it. The verification gate between stages is
+the mitigation, and it works only if people read what they verify.
 
 ## Migration Plan
 
-1. Create `briefs` and `document_revisions`.
-2. Rename `brd_documents` to `documents`; add `type`, `brief_id`,
-   `source_document_id`, `source_revision_id`, and the lifecycle columns;
-   drop the `Computed` definition from `project_key` and make it an ordinary
-   column.
-3. Move each existing row's `markdown` into a revision 1 row, then drop the
-   column.
-4. Backfill `type = 'brd'`. Existing rows have no brief; they are development
-   data only, so they are deleted rather than fabricated a brief — stated
-   here so the deletion is a decision rather than a surprise.
-5. Re-assert the CHECK constraints that already exist, plus the new lifecycle
-   ones.
+There is no data migration: the Postgres store holds development data only,
+and the new store starts empty.
 
-Rollback is the reverse migration. The only data at risk is development data,
-and `alembic downgrade` restores the shape rather than the rows.
+1. Add `RETIRED.md` and exclude the retired tests from the default suite, so
+   the first commit of this change states what is no longer live.
+2. Build the local store, authentication and the tools alongside the existing
+   code; nothing is deleted until the MCP path works end to end.
+3. Remove the HTTP routers and the backend client from the MCP server once no
+   tool calls them.
+
+Rollback is `git revert`. Nothing in production depends on either path.
 
 ## Open Questions
 
-- Should a rejected document be regenerable with the rejection note added to
-  the prompt as context? It would make rejection useful rather than merely
+- Should a rejected document be writable again with the rejection note
+  supplied as context? It would make rejection useful rather than merely
   final, and it changes no spec: the note is already stored.
-- Should a story breakdown carry an estimate or acceptance criteria per story?
-  Answerable after seeing what the first real breakdowns look like.
-- How long should a chain be kept? No retention policy exists for documents
-  (ADR-024 already flags this), and four documents per chain makes it arrive
-  sooner.
+- Should the review file be offered in the editor automatically, or only its
+  path reported? Depends on what is tolerable inside a chat flow, and is
+  answerable after using it.
+- How long should a chain be kept, and should the store ever be pruned? Not
+  urgent while it is one file one person owns.

@@ -2,127 +2,141 @@
 
 ## Purpose
 
-Produces each document in the chain from the one before it, so that a brief
-becomes a BRD, a BRD becomes an FSD, an FSD becomes a step procedure, and a
-step procedure becomes a proposed story breakdown — with each result checked
-for shape before anyone is shown it.
+Supplies the client with everything a stage needs — the source content and the
+shape the answer must take — then checks what comes back and stores it with
+its lineage, so that each link of the chain is written by the model already in
+the conversation rather than by a model this tool pays for.
 
 ## ADDED Requirements
 
-### Requirement: A document is generated from one source
+### Requirement: Starting a stage returns its context and its shape
 
-The system SHALL generate a document from exactly one source: a brief, or the
-document immediately before it in the chain. The generated document records
-which source produced it, so any document's lineage back to its brief is
-recoverable.
+The system SHALL provide an operation that, given a stage and its source,
+returns the source content and the instructions describing the shape the
+result must take. It SHALL NOT itself produce the document.
 
-#### Scenario: Generating a BRD from a brief
+#### Scenario: Starting the BRD stage
 
-- **WHEN** a user generates a BRD naming a stored brief
-- **THEN** a BRD document is produced from that brief and records it as its
-  source
+- **WHEN** a user starts the BRD stage naming a stored brief
+- **THEN** the brief's text, any attached Jira issue content, and the
+  instructions for writing a BRD are returned, together with a draft
+  identifier
 
-#### Scenario: Generating an FSD from a BRD
+#### Scenario: Starting a later stage
 
-- **WHEN** a user generates an FSD naming a BRD
-- **THEN** an FSD is produced and records that BRD as its source
+- **WHEN** a user starts the FSD stage naming a verified BRD
+- **THEN** the BRD's current text and the instructions for writing an FSD are
+  returned
 
-#### Scenario: Generating from the wrong kind of source
+#### Scenario: Nothing is written by starting
 
-- **WHEN** a user attempts to generate a step procedure naming a brief rather
-  than an FSD
-- **THEN** the request is refused, naming the kind of source that stage
-  requires
+- **WHEN** a stage is started
+- **THEN** no document exists yet, and starting the same stage again returns
+  the same context rather than accumulating anything
 
 ### Requirement: The chain's stages are fixed
 
 The supported stages SHALL be: brief to BRD, BRD to FSD, FSD to step
-procedure, and step procedure to story breakdown. No other pairing is
-generated.
+procedure, and step procedure to story breakdown. No other pairing is offered.
 
 #### Scenario: Requesting an unsupported pairing
 
-- **WHEN** a user attempts to generate a story breakdown directly from a BRD
+- **WHEN** a user attempts to start a story breakdown directly from a BRD
 - **THEN** the request is refused, naming the stage that must come first
 
-### Requirement: Only a verified source may be used
+#### Scenario: Starting a stage from the wrong kind of source
 
-The system SHALL refuse to generate from a document that a person has not yet
-verified. A brief needs no verification, because a person wrote it.
+- **WHEN** a user attempts to start the step procedure stage naming a brief
+- **THEN** the request is refused, naming the kind of source that stage
+  requires
 
-#### Scenario: Generating from an unverified document
+### Requirement: Only a verified, current source may be used
 
-- **WHEN** a user attempts to generate an FSD from a BRD that no person has
-  verified
+The system SHALL refuse to start a stage whose source has not been verified by
+a person, or whose source has changed since. A brief needs no verification,
+because a person wrote it.
+
+#### Scenario: An unverified source
+
+- **WHEN** a user starts the FSD stage from a BRD nobody has verified
 - **THEN** the request is refused, stating that the source must be verified
-  first, and nothing is generated
+  first
 
-#### Scenario: Generating from a verified document
+#### Scenario: A rejected source
 
-- **WHEN** a user generates an FSD from a BRD a person has verified
-- **THEN** generation proceeds
+- **WHEN** a user starts a stage from a rejected document
+- **THEN** the request is refused, stating that the source was rejected
 
-### Requirement: Access is decided before anything is generated
+#### Scenario: A stale source
 
-The system SHALL confirm the caller is a registered, active user holding a
-grant for the chain's project before it sends any content to a model.
+- **WHEN** a user starts a stage from a verified document whose own source has
+  since been corrected
+- **THEN** the request is refused, stating that the source changed and must be
+  verified again
 
-#### Scenario: A caller without a grant
+### Requirement: A drafted document is checked before it is stored
 
-- **WHEN** a user with no grant for the chain's project requests generation
-- **THEN** the request is refused, no content is sent to any model, and the
-  refusal is indistinguishable from the chain not existing
+The system SHALL provide an operation that accepts drafted text for a started
+stage, check it against the shape that stage requires, and store it only if it
+passes.
 
-#### Scenario: A deactivated account
+#### Scenario: A well-formed draft
 
-- **WHEN** a deactivated account requests generation
-- **THEN** the request is refused and no content is sent to any model
+- **WHEN** a client submits a draft matching the shape the stage requires
+- **THEN** the document is stored, awaiting verification, and its identifier
+  is returned
 
-### Requirement: The result must have the shape its type requires
+#### Scenario: A draft of the wrong shape
 
-The system SHALL check a generated document against the structure required for
-its type and SHALL NOT store a result that fails. A document that does not
-validate is recorded as a failed attempt with a reason.
+- **WHEN** a client submits prose instead of a document of the stage's shape
+- **THEN** nothing is stored, and the response lists what is wrong
 
-#### Scenario: A result that does not validate
+#### Scenario: An empty draft
 
-- **WHEN** a model returns prose instead of a document of the requested type
-- **THEN** no document is stored, the attempt is recorded as failed with a
-  reason, and the caller is told the result was unusable
+- **WHEN** a client submits empty or whitespace-only text
+- **THEN** nothing is stored and the submission is refused
 
-#### Scenario: A result cut off before it finished
+### Requirement: A rejected draft says what to fix
 
-- **WHEN** a model's reply stops because it reached its output limit
-- **THEN** the result is treated as a failure rather than as a short document,
-  because an incomplete document reads as a complete one
+Where a draft fails its shape check, the response SHALL list every problem
+found rather than only the first, so the client can correct the draft and
+submit again without a further round trip per mistake.
 
-### Requirement: A story breakdown proposes work without creating it
+#### Scenario: Several problems at once
 
-A story breakdown SHALL be a document describing proposed stories, each with
-its tasks and subtasks. The system SHALL NOT create, modify or delete anything
-in Jira.
+- **WHEN** a draft has a requirement with no scenarios and a scenario with no
+  expected outcome
+- **THEN** both problems are listed in one response
 
-#### Scenario: Generating a story breakdown
+#### Scenario: Correcting and resubmitting
 
-- **WHEN** a user generates a story breakdown from a verified step procedure
-- **THEN** a document is produced listing stories with their tasks and
-  subtasks, and nothing is written to Jira
+- **WHEN** a client submits a corrected draft for the same stage after a
+  failure
+- **THEN** it is checked afresh and stored if it now passes
 
-#### Scenario: Confirming Jira is untouched
+### Requirement: A document records where it came from
 
-- **WHEN** a story breakdown has been generated
-- **THEN** no issue in Jira has been created or altered by the platform
+Every stored document SHALL record the stage that produced it, the source it
+was written from, and the exact revision of that source, so its lineage back
+to the brief is recoverable.
+
+#### Scenario: Tracing a document
+
+- **WHEN** a user asks where an FSD came from
+- **THEN** the BRD it was written from is named, together with the revision of
+  that BRD that was current at the time
 
 ### Requirement: The delivery phase label travels down the chain
 
 Where a source document marks content with a delivery phase of the product
-being specified, the generated document SHALL carry that phase onto the
-content derived from it.
+being specified, the instructions for the next stage SHALL require that phase
+to be carried onto the content derived from it, and the shape check SHALL
+confirm it was.
 
 #### Scenario: A phase-marked requirement produces phase-marked stories
 
-- **WHEN** an FSD marks a requirement as Phase 2 and a step procedure and
-  story breakdown are generated from it
+- **WHEN** an FSD marks a requirement as Phase 2, and a step procedure and
+  story breakdown are written from it
 - **THEN** the steps and stories derived from that requirement are also marked
   Phase 2
 
@@ -131,67 +145,72 @@ content derived from it.
 - **WHEN** a source marks no phase on some content
 - **THEN** the derived content carries no phase, rather than a guessed one
 
-### Requirement: Generating is explicit and does not repeat by accident
+#### Scenario: A phase that cannot be read
 
-Generation SHALL happen only because a caller asked for it. Asking again for a
-document that already exists SHALL return the existing one unless the caller
-explicitly requests a new generation.
+- **WHEN** a draft marks a phase in a form the shape check cannot read
+- **THEN** the draft is refused naming the expected form, rather than the
+  phase being silently dropped
 
-#### Scenario: Asking twice
+### Requirement: A story breakdown proposes work without creating it
 
-- **WHEN** a user requests a BRD for a brief that already has one, without
-  asking to regenerate
-- **THEN** the existing document is returned, and no model is called
+A story breakdown SHALL be a document describing proposed stories, each with
+its tasks and subtasks. The system SHALL NOT create, modify or delete anything
+in Jira.
 
-#### Scenario: Explicitly regenerating
+#### Scenario: Writing a story breakdown
 
-- **WHEN** a user requests generation and asks for a new one
-- **THEN** a new document is produced, and the previous one is kept
+- **WHEN** a story breakdown is stored for a verified step procedure
+- **THEN** it lists stories with their tasks and subtasks, and nothing in Jira
+  has been created or altered
 
-### Requirement: Generation is optional and says so when absent
+### Requirement: Writing a stage twice is deliberate
 
-Where no model is configured, the system SHALL continue to serve everything
-else and SHALL refuse generation with a message naming what is missing.
+Where a document already exists for a stage, starting that stage again SHALL
+report the existing document rather than inviting a replacement, unless the
+caller asks to write a new one. Writing a new one SHALL keep the previous.
 
-#### Scenario: No model configured
+#### Scenario: Starting a stage that is already done
 
-- **WHEN** a user requests generation on a server with no model configured
-- **THEN** the request is refused with a message naming the missing
-  configuration, and reading existing documents still works
+- **WHEN** a user starts the BRD stage for a brief that already has a BRD
+- **THEN** the existing document is reported, and no new draft is invited
 
-#### Scenario: Access outranks configuration
+#### Scenario: Deliberately writing it again
 
-- **WHEN** a user with no grant for the project requests generation on a
-  server with no model configured
-- **THEN** the refusal is the access refusal, so an unauthorised caller learns
-  nothing about how the server is configured
-
-### Requirement: What an attempt cost is recorded
-
-The system SHALL record, for every generation attempt including a failed one,
-which prompt version and which model produced it and what it consumed.
-
-#### Scenario: A failed attempt that was still charged for
-
-- **WHEN** a model returns an unusable result
-- **THEN** the failed attempt records the model and the usage it reported, so
-  cost is attributable even when nothing was produced
+- **WHEN** a user starts the stage again and asks for a new document
+- **THEN** a draft is invited, and storing it leaves the previous document in
+  place
 
 ### Requirement: Source content is treated as data
 
 Content taken from a brief, an earlier document or a Jira issue SHALL be
-placed into a prompt as data rather than as instructions, and SHALL NOT be
+presented to the client as data rather than as instructions, and SHALL NOT be
 written into any log.
 
 #### Scenario: A source containing instructions aimed at a model
 
 - **WHEN** a source document contains text instructing the model to ignore its
   instructions
-- **THEN** generation treats that text as content, and the result is still
-  checked for shape before it is stored
+- **THEN** that text is presented as content inside delimiters, and whatever
+  comes back is still checked for shape before it is stored
 
-#### Scenario: A generation that fails
+#### Scenario: A failure while a stage is in progress
 
-- **WHEN** a generation attempt fails for any reason
-- **THEN** no part of the prompt or the source content appears in any log
-  entry
+- **WHEN** any part of starting a stage or storing a draft fails
+- **THEN** no source content and no drafted text appears in any log entry
+
+### Requirement: What produced a document is recorded as reported
+
+The system SHALL record which client and model a draft claims to have come
+from, and SHALL present it as a claim rather than a verified fact.
+
+#### Scenario: A client that names itself
+
+- **WHEN** a client submits a draft and names the model that wrote it
+- **THEN** that name is stored with the document and shown as reported by the
+  client
+
+#### Scenario: A client that names nothing
+
+- **WHEN** a client submits a draft without naming a model
+- **THEN** the document is stored with no model recorded, rather than a
+  guessed one

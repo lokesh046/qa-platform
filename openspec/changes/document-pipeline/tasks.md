@@ -1,157 +1,163 @@
 # Tasks
 
-## 1. Data model and migration
+## 1. Mark what is retired
 
-- [ ] 1.1 Add `briefs` (text, project key, submitter, submitted at) and
-      `brief_jira_issues`, with CHECK constraints for non-empty text, the
-      length bound, and a lowercase submitter email; verify by attempting an
-      empty brief, an oversized brief and a mixed-case email in `psql` and
-      confirming each is refused by name
-- [ ] 1.2 Rename `brd_documents` to `documents`; add `type`, `brief_id`,
-      `source_document_id`, `source_revision_id`, `verification_state`,
-      `verified_by`, `verified_at` and `rejection_note`; convert
-      `project_key` from a `Computed` column to an ordinary column with a
-      foreign key path to the brief; verify `alembic upgrade head` then
-      `alembic downgrade -1` then `upgrade head` again leaves `\d documents`
-      identical
-- [ ] 1.3 Add `document_revisions` (document, revision number, markdown,
-      author email, author kind, note, created at) with a unique constraint on
-      (document, revision number); verify by inserting two revisions with the
-      same number and confirming the database refuses the second
-- [ ] 1.4 Move `markdown` out of `documents` into revision 1 and drop the
-      column; verify no row in `documents` has a markdown column and every
-      pre-existing document has exactly one revision
-- [ ] 1.5 Re-assert every CHECK constraint from `brd_documents` and add the
-      lifecycle ones (a verified document has a verifier and a time; a
-      rejected one has a note); verify by attempting each violation in `psql`
-      and confirming all are refused
-- [ ] 1.6 Write ADR-025 recording that `project_key` is no longer a generated
-      column and what that costs, since it weakens an authorisation
-      invariant; verify the ADR names the alternative considered and the
-      residual risk
+- [ ] 1.1 Add `RETIRED.md` naming the FastAPI app, the Postgres models and
+      migrations, Redis, the compose product path, the users and grants
+      tables, the service token and `mcp_server/backend_client.py`, with when
+      and why they stopped being used; verify it names every path listed in
+      proposal.md under "What is retired"
+- [ ] 1.2 Exclude the retired modules' tests from the default pytest run and
+      keep them runnable by an explicit marker; verify `uv run pytest` passes
+      without them and `uv run pytest -m retired` still runs them
+- [ ] 1.3 Update `README.md` so the first thing it describes is installing the
+      MCP server, with the backend presented as retired; verify a reader
+      following only the README reaches a working tool without starting Docker
 
-## 2. Brief intake
+## 2. Local store
 
-- [ ] 2.1 Add `app/modules/documents/` with `schemas.py`, `repository.py`,
-      `service.py`, `router.py`, replacing `app/modules/brd/`; verify
-      `uv run ruff check .` passes and no module imports `app.modules.brd`
-- [ ] 2.2 Implement brief submission with the access gates (registered,
-      active, holds a grant for the named project) running before anything is
-      stored; verify a unit test asserts no row is written when the gate
-      refuses
-- [ ] 2.3 Implement attaching Jira issues as context, refusing the whole
-      submission if any referenced issue is inaccessible or missing; verify a
-      unit test submits two issues where one is inaccessible and asserts
-      nothing was stored
-- [ ] 2.4 Implement reading a brief, refused identically for "no access" and
-      "does not exist"; verify a unit test asserts the two responses are
-      byte-identical
-- [ ] 2.5 Add `POST /api/v1/briefs` and `GET /api/v1/briefs/{id}`, and
-      document both in `docs/api.md` including the audit rows each writes;
-      verify the documented `curl` commands run as written against the local
-      stack
+- [ ] 2.1 Design and create the SQLite schema for briefs, documents,
+      revisions and local records, with a schema version in the file; verify
+      a test creates a store from scratch and reads back a brief, a document
+      and two revisions
+- [ ] 2.2 Implement create-on-first-use and upgrade-on-start; verify a test
+      opens a store written by the previous schema version and finds its rows
+      intact afterwards
+- [ ] 2.3 Refuse a store written by a newer version rather than writing to it;
+      verify a test sets a higher version in the file and asserts the tool
+      stops with a message naming the file
+- [ ] 2.4 Report an unreadable store rather than silently starting a new one;
+      verify a test corrupts the file and asserts the error names the path and
+      no empty store replaces it
+- [ ] 2.5 Confirm no delete path exists for briefs, documents or revisions;
+      verify a test enumerates the store's operations and asserts none deletes
+- [ ] 2.6 Write ADR-025 recording the local SQLite store, including why
+      ADR-018's "no SQLite" rule does not apply; verify the ADR names the
+      alternatives and the single-file backup risk
 
-## 3. Generation, generalised
+## 3. Jira authentication
 
-- [ ] 3.1 Generalise `app/llm/prompt.py` to build a prompt for any stage from
-      a source document plus optional Jira context, keeping the delimiting of
-      untrusted content; verify existing prompt tests still pass and a new
-      test asserts source text is inside the data delimiters
-- [ ] 3.2 Add prompt files for `fsd_v1`, `step_procedure_v1` and
-      `story_breakdown_v1`, each stating the exact `**Phase:** <n>` form;
-      verify a test asserts every stage has a prompt pair and a version
-- [ ] 3.3 Add a validator registry keyed by document type, reusing
-      `normalise()`; verify unit tests cover a valid and an invalid example
-      for each of the four types
-- [ ] 3.4 Implement step-procedure validation (ordered steps, each with an
-      action and an expected result); verify tests reject an unordered list
-      and a step with no expected result
-- [ ] 3.5 Implement story-breakdown validation (stories, each with tasks and
-      optional subtasks); verify tests reject a story with no tasks and a
-      subtask with no parent task
-- [ ] 3.6 Parse `**Phase:** <n>` in every validator and carry it onto the
-      stored counts; verify a test generates a chain fixture where one
-      requirement is Phase 2 and asserts the derived steps and stories are
-      Phase 2
-- [ ] 3.7 Implement generation from a source document, refusing an
-      unsupported stage pairing by name; verify tests cover each supported
-      pairing and at least two unsupported ones
+- [ ] 3.1 Implement the browser OAuth flow against a loopback redirect, with
+      the authorization code exchanged for tokens; verify an integration test
+      drives it against a stubbed Atlassian endpoint and ends with a token
+      stored
+- [ ] 3.2 Store the refresh token in the OS keychain; verify a test asserts no
+      file in the working directory or the tool's directory contains the token
+      after sign-in
+- [ ] 3.3 Implement silent renewal, and re-consent when renewal fails; verify
+      tests cover an expired access token renewing without a prompt, and an
+      invalid refresh token asking the user to sign in again
+- [ ] 3.4 Implement accessible-site discovery, asking once when there is more
+      than one and remembering the choice; verify tests cover one site and
+      three
+- [ ] 3.5 Implement sign-out and an authentication status report that exposes
+      no token; verify a test asserts the status output contains no part of
+      any stored value
+- [ ] 3.6 Move the Jira client from HTTP Basic to the OAuth bearer token and
+      the Atlassian API gateway host; verify the existing Jira client tests
+      pass against the new auth with their fixtures updated
+- [ ] 3.7 Write ADR-026 recording per-user OAuth, the embedded client secret
+      and why secretless PKCE is unavailable; verify the ADR cites the open
+      Atlassian request and states what the secret does and does not authorise
+- [ ] 3.8 Document registering the Atlassian OAuth app in `README.md`,
+      including the exact callback URL and scopes; verify somebody following
+      it registers an app the tool can use
 
-## 4. Lifecycle
+## 4. Brief intake
 
-- [ ] 4.1 Implement verification and rejection with a note, refusing callers
-      without a grant; verify unit tests cover verify, reject, and a refusal
-      leaving the state unchanged
-- [ ] 4.2 Implement correction as a new revision, never overwriting, and
-      returning the document to awaiting verification; verify a test corrects
-      a verified document twice and asserts both earlier revisions are still
-      readable and the state is awaiting verification
-- [ ] 4.3 Implement staleness as a computed comparison of
-      `source_revision_id` against the source's current revision; verify a
-      test edits a source and asserts the derived document reads as stale
-      without any write having touched it
-- [ ] 4.4 Refuse generation from a source that is unverified, rejected or
-      stale, each with its own message; verify three unit tests, one per case
-- [ ] 4.5 Implement reading a document's history (revisions and state
-      changes, in order, with actors); verify a test asserts ordering and
-      that a caller without access is refused
-- [ ] 4.6 Confirm no delete path exists for briefs, documents or revisions;
-      verify a test enumerates the router's operations and asserts none is a
-      delete
-- [ ] 4.7 Audit every lifecycle action including refusals; verify a test
-      asserts an audit event for each of verify, reject, correct and history
-      read, in both the allowed and refused cases
-- [ ] 4.8 Correct `app/modules/approvals/README.md` to say it is for Phase 3
-      test-run sign-off, not document verification; verify the README no
-      longer claims to own BRD approval
+- [ ] 4.1 Implement brief submission with bounds and an immutable text;
+      verify tests cover empty, whitespace-only, oversized and valid
+- [ ] 4.2 Implement attaching Jira issues read as the signed-in user,
+      refusing the whole submission if any is unreadable; verify a test with
+      two issues where one is forbidden asserts nothing was stored
+- [ ] 4.3 Implement submitting with no Jira issues while signed out; verify a
+      test asserts it succeeds without triggering authentication
+- [ ] 4.4 Implement reading a brief; verify tests cover a stored brief and an
+      unknown identifier
 
-## 5. Endpoints and the chain end to end
+## 5. Stages and shape checking
 
-- [ ] 5.1 Add the document endpoints (generate, read, verify, reject,
-      correct, history) and remove `POST /api/v1/brd` and
-      `GET /api/v1/brd/{issue_key}`; verify the OpenAPI schema lists the new
-      paths and neither old one
-- [ ] 5.2 Document every new endpoint in `docs/api.md` with its required
-      role, its audit rows, and the 404-before-503 ordering; verify each
-      documented example runs against the local stack
-- [ ] 5.3 Run the full chain against a local stand-in provider, as Step 12
-      did: brief, BRD, verify, FSD, verify, step procedure, verify, story
-      breakdown; verify every stage produces a document, each refusal before
-      verification behaves, and the phase label survives to the stories
-- [ ] 5.4 Confirm Jira is untouched by the whole run; verify by comparing the
-      issue list and each referenced issue's `updated` timestamp before and
-      after
+- [ ] 5.1 Implement starting a stage: return source content plus instructions,
+      refusing unsupported pairings by name; verify tests cover all four
+      supported stages and two unsupported ones
+- [ ] 5.2 Refuse starting a stage whose source is unverified, rejected or
+      stale, each with its own message; verify three tests, one per case
+- [ ] 5.3 Convert the prompt files into the instructions a stage returns, one
+      per stage, each stating the exact phase-label form; verify a test
+      asserts every stage has instructions and a version
+- [ ] 5.4 Implement storing a drafted document, checking shape before storing
+      and reporting every problem at once; verify a test submits a draft with
+      two distinct faults and asserts both are reported and nothing is stored
+- [ ] 5.5 Add shape checks for step procedure and story breakdown alongside
+      the existing Requirement/Scenario one, in a registry keyed by stage;
+      verify tests cover a valid and an invalid example for each of the four
+- [ ] 5.6 Parse and require the phase label, refusing an unreadable one rather
+      than dropping it; verify a test marks a requirement Phase 2 and asserts
+      derived steps and stories carry it, and a second test asserts a
+      malformed label is refused
+- [ ] 5.7 Record lineage on every stored document, including the source
+      revision; verify a test builds a full chain and asserts each document
+      names its source and the revision current at the time
+- [ ] 5.8 Record the client-reported model as a claim; verify tests cover a
+      client that names one and a client that does not
 
-## 6. MCP tools
+## 6. Lifecycle
 
-- [ ] 6.1 Add `submit_brief`, `generate_document` and `read_document` tools,
-      each validating arguments, writing an audit record and forwarding, with
-      no business logic in the gatekeeper; verify tests drive them through
-      the SDK's in-process client
-- [ ] 6.2 Assert that no tool can verify or reject a document; verify a test
-      enumerates the exposed tools and asserts none performs verification
-- [ ] 6.3 Document every tool in `docs/mcp-tools.md` with its arguments,
-      validation rules, backend endpoint and whether it reads or writes;
-      verify the documented argument shapes match the tools' schemas
-- [ ] 6.4 Assert no internal failure text reaches the model; verify a test
-      makes the backend raise with a connection string in the message and
-      asserts it is absent from what the client receives
+- [ ] 6.1 Implement the review file: write the document with a status line,
+      watch it, apply an edited text as a revision before applying the state;
+      verify a test edits both text and status and asserts the revision is
+      stored first and the state applies to it
+- [ ] 6.2 Handle an unreadable status value without changing state; verify a
+      test writes nonsense and asserts the document is untouched and the file
+      reports the accepted values
+- [ ] 6.3 Implement correction returning a document to awaiting verification;
+      verify a test corrects a verified document and asserts the state and
+      that no stage can be started from it
+- [ ] 6.4 Implement staleness as a comparison against the source's current
+      revision; verify a test corrects a source and asserts the derived
+      document reads stale with no write having touched it
+- [ ] 6.5 Implement reading a document's history in order; verify a test
+      asserts revisions and state changes interleave correctly by time
+- [ ] 6.6 Keep local records of verification, rejection and correction; verify
+      a test asserts a record exists for each, independent of the document row
+- [ ] 6.7 Correct `app/modules/approvals/README.md` to say it is for Phase 3
+      test-run sign-off; verify it no longer claims to own document approval
 
-## 7. Integration verification
+## 7. The tools
 
-- [ ] 7.1 Build the integration fixture the project still lacks — a separate
-      test database, one `alembic upgrade head`, a transaction rolled back
-      per test; verify two tests sharing a table do not see each other's rows
-- [ ] 7.2 Cover what unit tests cannot: the CHECK constraints, the revision
-      uniqueness constraint, and that reading a server-generated column after
-      an update does not raise; verify the suite fails if the
-      `_reload_server_values` call is removed
-- [ ] 7.3 Write the step log and the CHANGELOG entry for this change, and
-      update the README's project structure and environment variables;
-      verify `docs/progress/` has an entry naming every ADR this change added
+- [ ] 7.1 Expose the tools: submit brief, read brief, start stage, store
+      document, read document, read history, auth status, sign out; verify a
+      test drives each through the SDK's in-process client
+- [ ] 7.2 Assert no tool verifies, rejects or deletes; verify a test
+      enumerates the offered tools and asserts none of the three exists
+- [ ] 7.3 Keep source content and drafted text out of every log line; verify a
+      test fails a stage with distinctive content and asserts it appears in no
+      log entry
+- [ ] 7.4 Keep internal failure text away from the model; verify a test raises
+      with a connection string in the message and asserts it is absent from
+      what the client receives
+- [ ] 7.5 Document every tool in `docs/mcp-tools.md` with arguments,
+      validation rules and whether it reads or writes; verify the documented
+      shapes match the tools' schemas
+
+## 8. End to end
+
+- [ ] 8.1 Run the full chain in Claude Code against a real Jira account:
+      brief, BRD, verify, FSD, verify, step procedure, verify, story
+      breakdown; verify every stage produces a document and each refusal
+      before verification behaves
+- [ ] 8.2 Confirm Jira is untouched by the whole run; verify by comparing each
+      referenced issue's `updated` timestamp before and after
+- [ ] 8.3 Confirm installation is one MCP entry on a machine that has never
+      run the tool; verify from a clean home directory that first use signs in
+      and creates the store with no other step
+- [ ] 8.4 Write the step log and CHANGELOG entry, and update the README's
+      project structure and configuration; verify `docs/progress/` has an
+      entry naming every ADR this change added
 
 ## Workflow follow-up
 
 - Archive this change once implemented: `openspec archive document-pipeline`.
-- Stage 5 of the diagram (Jira context to Python script) is a separate change.
-- Writing stories into Jira is a separate change, behind an approval gate.
+- Stage 5 of the use case (Jira context to Python script) is a separate change.
+- Writing stories into Jira is a separate change.
+- Reviving the retired backend for unattended work is a separate change.
