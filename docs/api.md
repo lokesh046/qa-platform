@@ -223,6 +223,117 @@ curl -s -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
 }
 ```
 
+### POST /api/v1/brd
+
+**Purpose:** generate a Business Requirements Document for one Jira issue, in
+OpenSpec's Requirement/Scenario format. Returns an existing document unchanged
+unless `regenerate` is true.
+
+**Required role:** service token **and** an actor header naming an active user
+who holds a `user_project_access` grant for the issue's project. The same gate
+as reading the issue, because generating requires reading it.
+
+**Headers:**
+
+| Header | Required | Notes |
+| --- | --- | --- |
+| `Authorization` | yes | `Bearer <INTERNAL_API_TOKEN>`. Compared in constant time. |
+| `X-Actor-Email` | yes | The end user the MCP server is acting for. |
+| `Content-Type` | yes | `application/json`. |
+
+**Request body:** `BrdGenerateRequest`. Unknown fields are rejected with a 422.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `issue_key` | string | yes | Must match `^[A-Z][A-Z0-9]+-[0-9]+$`, 3–64 characters. |
+| `regenerate` | boolean | no | Default `false`. Generate a new document even if one exists. Generating costs money and rate limit, so the default reuses. |
+
+**Success response:** `200 OK`. **Not 201**, even when a document is created:
+the common case is reuse, and a status that depended on it would make every
+caller branch on it. The `reused_existing` field says which happened.
+
+```json
+{
+  "data": {
+    "id": "0f9c...",
+    "issue_key": "SCRUM-1",
+    "project_key": "SCRUM",
+    "status": "ready",
+    "markdown": "## ADDED Requirements\n\n### Requirement: ...",
+    "requirement_count": 4,
+    "scenario_count": 9,
+    "open_question_count": 1,
+    "prompt_version": "brd_v1",
+    "model_reported": "publisher/model-name",
+    "prompt_tokens": 1203,
+    "completion_tokens": 842,
+    "failure_reason": null,
+    "created_at": "2026-11-09T12:30:00Z",
+    "finished_at": "2026-11-09T12:30:11Z",
+    "reused_existing": false
+  },
+  "error": null,
+  "request_id": "..."
+}
+```
+
+`status` is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | A document with requirements and scenarios. |
+| `needs_info` | The issue said too little, so the document is open questions only. A valid answer, and nothing can be tested from it. |
+| `failed` | No document was produced. `failure_reason` says why, as a short code. |
+| `pending` | Generation has not finished. Only visible if a generation never returned. |
+
+**Error responses:**
+
+| Status | `error.code` | When |
+| --- | --- | --- |
+| 401 | `unauthorized` | Missing or wrong service token. |
+| 403 | `forbidden` | The actor is not a registered user, or is deactivated. |
+| 404 | `not_found` | The issue does not exist **or** the actor has no grant for its project. Deliberately indistinguishable (ADR-010). Returned **before** any check of whether generation is configured, so an unauthorised caller learns nothing about the feature. |
+| 422 | `validation_failed` | Malformed issue key, or an unknown field in the body. |
+| 429 | `rate_limited` | The model provider's rate limit was reached. |
+| 502 | `upstream_error` | The provider failed, or returned something that is not a usable requirements document — including a reply that was cut off. Nothing partial is stored. |
+| 503 | `service_unavailable` | Generation is not configured on this server (`LLM_MODEL` or `LLM_API_KEY` unset). |
+| 504 | `upstream_timeout` | The provider did not answer in time. |
+
+**Audit:** two rows per call. One `jira_issue.read` from the delegated access
+check, and one `brd.generate`. A refusal appears in both, so "who tried to
+generate a document for ABC-1" is answerable as well as "why were they
+refused".
+
+**Implemented in:** `app/modules/brd/router.py`
+
+### GET /api/v1/brd/{issue_key}
+
+**Purpose:** return the newest document for an issue without generating one.
+
+**Required role:** identical to `POST /api/v1/brd`.
+
+**Path parameters:**
+
+| Name | Type | Validation |
+| --- | --- | --- |
+| `issue_key` | string | Must match `^[A-Z][A-Z0-9]+-[0-9]+$`, 3–64 characters. |
+
+**Request body:** none.
+
+**Success response:** `200 OK`, the same `BrdRead` shape as above with
+`reused_existing: false`. "Newest" means the most recent row whose status is
+`ready` or `needs_info` (ADR-024).
+
+**Error responses:** as above, minus the provider ones, plus:
+
+| Status | `error.code` | When |
+| --- | --- | --- |
+| 404 | `not_found` | No document exists yet, **or** the actor has no grant for the project. The same status for both, because distinguishing them would leak which projects exist. |
+
+**Audit:** `brd.read`, with `allowed` or `error`/`no_document`.
+
+**Implemented in:** `app/modules/brd/router.py`
+
 ### POST /api/v1/audit
 
 **Purpose:** append one audit record on behalf of a gatekeeper. Exists so the

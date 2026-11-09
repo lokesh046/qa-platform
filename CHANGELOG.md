@@ -2,6 +2,26 @@
 
 One line per step, newest first.
 
+- 2026-11-09 — Step 12: the brd module. A Jira issue now becomes a stored
+  requirements document: `brd_documents` with its migration, the module, and
+  `POST /api/v1/brd` plus `GET /api/v1/brd/{issue_key}`. ADR-024 settles where
+  a document lives — the row, not a file, because the API's filesystem is a
+  container's and the row has to exist anyway for Phase 3. Six gates, and the
+  access ones are delegated to `jira.service.get_issue` rather than
+  reimplemented, so the four-check order exists in exactly one place: nothing
+  reaches a model on behalf of a caller who would be refused, which a test
+  asserts by making the gate raise and checking no model call and no row. The
+  configuration gate sits before the existing-document check, so an
+  unconfigured server says so instead of appearing to work for issues that
+  already have a document. Nothing partial is stored: a provider failure, a
+  truncated reply and an unusable reply all produce a `failed` row, and token
+  usage is kept on a failure because an unusable reply was still charged for.
+  Eight CHECK constraints make the impossible states unreachable, each verified
+  by trying to break it. A live call found a real gap: a refused generation was
+  only audited as `jira_issue.read`, leaving "who tried to generate for ABC-1"
+  unanswerable, so a refusal now writes a row under its own action too. 23
+  tests, 591 in total.
+
 - 2026-11-09 — Step 11: the model client and output validation. `app/llm/`
   gained the only code in `app/` that talks to a model, and the validator that
   decides whether a reply may be stored. ADR-023 settles the provider question

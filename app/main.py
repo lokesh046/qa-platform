@@ -24,6 +24,7 @@ from app.core.logging import RequestIdMiddleware, configure_logging
 from app.core.redis import close_redis
 from app.llm.client import close_http_client as close_llm_http_client
 from app.modules.audit.router import router as audit_router
+from app.modules.brd.router import router as brd_router
 from app.modules.health.router import router as health_router
 from app.modules.jira.client import close_http_client
 from app.modules.jira.router import router as jira_router
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(jira_router, prefix=settings.api_v1_prefix)
+    app.include_router(brd_router, prefix=settings.api_v1_prefix)
     app.include_router(audit_router, prefix=settings.api_v1_prefix)
     return app
 

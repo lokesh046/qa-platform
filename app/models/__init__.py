@@ -10,6 +10,7 @@ Add every new model module to the imports below.
 
 from app.models.audit_log import AuditLog, AuditOutcome, AuditSource
 from app.models.base import CreatedAtMixin, TimestampMixin, TimestampTZ, UUIDPrimaryKeyMixin
+from app.models.brd_document import TERMINAL_BRD_STATUSES, BrdDocument, BrdStatus
 from app.models.jira_issue import ISSUE_KEY_PATTERN, JiraIssue
 from app.models.job import TERMINAL_STATUSES, Job, JobStatus, JobType
 from app.models.user import PROJECT_KEY_PATTERN, User, UserProjectAccess, UserRole
@@ -17,10 +18,13 @@ from app.models.user import PROJECT_KEY_PATTERN, User, UserProjectAccess, UserRo
 __all__ = [
     "ISSUE_KEY_PATTERN",
     "PROJECT_KEY_PATTERN",
+    "TERMINAL_BRD_STATUSES",
     "TERMINAL_STATUSES",
     "AuditLog",
     "AuditOutcome",
     "AuditSource",
+    "BrdDocument",
+    "BrdStatus",
     "CreatedAtMixin",
     "JiraIssue",
     "Job",
