@@ -152,3 +152,27 @@ def log_buffer() -> Iterator[io.StringIO]:
     finally:
         root.removeHandler(handler)
         root.setLevel(previous_level)
+
+TEST_SIGNING_KEY = "mcp-token-signing-key-for-tests-0123456789"
+TEST_GITHUB_CLIENT_ID = "Iv1.test-client-id"
+TEST_GITHUB_CLIENT_SECRET = "github-oauth-app-secret-for-tests-0123456"
+
+
+def make_oauth_settings(**overrides: Any) -> McpSettings:
+    """An http server in OAuth mode, with the three values that mode requires.
+
+    Separate from ``make_mcp_settings`` because the two trust models are
+    genuinely different and a test should have to say which one it means
+    (ADR-022). The GitHub values are fake and local to this file.
+    """
+    values: dict[str, Any] = {
+        "mcp_transport": "http",
+        "mcp_auth_mode": "oauth",
+        "qa_actor_email": None,
+        "mcp_public_url": "https://qa.example.org",
+        "github_client_id": TEST_GITHUB_CLIENT_ID,
+        "github_client_secret": TEST_GITHUB_CLIENT_SECRET,
+        "mcp_token_signing_key": TEST_SIGNING_KEY,
+    }
+    values.update(overrides)
+    return make_mcp_settings(**values)

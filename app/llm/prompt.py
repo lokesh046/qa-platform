@@ -5,7 +5,7 @@ module builds a prompt and names its version; **who executes it is not its
 concern**. That separation is why it survived the reversal in ADR-021, where
 the plan to run generation on the caller's own model through MCP sampling was
 dropped once sampling turned out to be deprecated and supported by two clients
-out of twenty-four. The provider is settled in ADR-022.
+out of twenty-four. The provider is settled separately, when Phase 2 resumes.
 
 Prompt text lives in ``prompts/`` as files rather than string literals, so a
 change to it appears in a diff and can be reviewed. The version is recorded on

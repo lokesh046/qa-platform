@@ -27,7 +27,9 @@ HTTP_HEADERS = {"authorization": f"Bearer {TEST_TOKEN}", "x-actor-email": TEST_A
 @pytest.fixture
 def http_settings() -> McpSettings:
     """An http-transport server with no process-wide actor."""
-    return make_mcp_settings(mcp_transport="http", qa_actor_email=None)
+    return make_mcp_settings(
+        mcp_transport="http", mcp_auth_mode="service_token", qa_actor_email=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +138,11 @@ def test_the_token_is_checked_before_the_actor_header_is_read(http_settings: Mcp
 def test_http_ignores_the_process_wide_actor():
     # A container that starts cleanly and attributes every call to one person
     # is the worst available outcome, because it looks like it is working.
-    settings = make_mcp_settings(mcp_transport="http", qa_actor_email="someone.else@acme-qa.co")
+    settings = make_mcp_settings(
+        mcp_transport="http",
+        mcp_auth_mode="service_token",
+        qa_actor_email="someone.else@acme-qa.co",
+    )
     assert resolve_actor(HTTP_HEADERS, settings) == TEST_ACTOR
 
 
@@ -200,6 +206,8 @@ def test_http_warns_when_the_process_wide_actor_is_set(log_buffer: io.StringIO):
     # Not fatal, but somebody expects it to be used, and saying so is cheaper
     # than the support conversation about why every audit row names one person.
     check_startup_identity(
-        make_mcp_settings(mcp_transport="http", qa_actor_email="someone@acme-qa.co")
+        make_mcp_settings(
+            mcp_transport="http", mcp_auth_mode="service_token", qa_actor_email="someone@acme-qa.co"
+        )
     )
     assert "ignored on the http transport" in log_buffer.getvalue()

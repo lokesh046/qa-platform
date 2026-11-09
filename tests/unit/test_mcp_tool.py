@@ -323,7 +323,9 @@ async def test_a_call_with_no_identity_is_refused_before_the_arguments(audit: re
     # Refused before the arguments are even looked at, and not audited: there
     # is no actor to attribute a record to, and the backend would reject a row
     # without one.
-    settings = make_mcp_settings(mcp_transport="http", qa_actor_email=None)
+    settings = make_mcp_settings(
+        mcp_transport="http", mcp_auth_mode="service_token", qa_actor_email=None
+    )
     async with tool_client(settings) as tool:
         result = await tool.call_tool("get_jira_issue", {"issue_key": "ABC-123"})
     assert result.is_error
@@ -335,7 +337,9 @@ async def test_an_http_server_refuses_a_malformed_key_on_identity_first(audit: r
     # Over the in-process transport no headers are delivered, so an http
     # server refuses on identity before it ever looks at the key. Checked so
     # that neither transport can start answering calls it should not.
-    settings = make_mcp_settings(mcp_transport="http", qa_actor_email=None)
+    settings = make_mcp_settings(
+        mcp_transport="http", mcp_auth_mode="service_token", qa_actor_email=None
+    )
     async with tool_client(settings) as tool:
         result = await tool.call_tool("get_jira_issue", {"issue_key": "nonsense"})
     assert result.is_error

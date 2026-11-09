@@ -49,8 +49,8 @@ capability beyond tools, which is the only thing every client implements.
 
 BRD generation therefore runs server-side, which returns the question to
 ADR-020's shape — a model this platform calls itself — for a better reason than
-ADR-020 originally gave. The specific provider is settled separately; see
-ADR-022.
+ADR-020 originally gave. The specific provider is still open and is settled by
+the step that makes the first live generation, not by this one.
 
 ## Alternatives
 
