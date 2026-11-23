@@ -1,5 +1,15 @@
 """Generated Business Requirements Documents.
 
+**Deprecated.** Superseded by ``app.models.document.Document``, which holds
+both BRDs and FDSs with versions, review state and a Git commit. This table
+and the ``brd`` module that uses it are removed when the BRD generation loop
+is rewritten (build step 5).
+
+It is kept for now because it is live and covered by passing tests, and
+deleting it would break the one generation path that currently works. Do not
+add to it.
+
+
 One row per **generation attempt**, not per document (ADR-024). A failed
 attempt is a row carrying its reason, which makes "how often does the model
 return something unusable" a SQL question rather than log archaeology.

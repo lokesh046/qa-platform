@@ -48,7 +48,11 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["migrations/versions"]
+# migrations/versions: Alembic generates these; reformatting them makes a
+#   diff against what the tool produced, which is harder to review.
+# .claude: vendored third-party skills (agent instructions and their helper
+#   scripts). Not our code, and not ours to restyle.
+extend-exclude = ["migrations/versions", ".claude"]
 
 [tool.ruff.lint]
 select = [

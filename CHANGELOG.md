@@ -2,6 +2,22 @@
 
 One line per step, newest first.
 
+- 2026-11-23 — Step 13: the data model for the whole assistant. Nine tables —
+  `jira_connections`, `documents`, `requirements`, `scenarios`,
+  `open_questions`, `jira_items`, `test_cases`, `scripts`, `approvals` — with
+  37 CHECK constraints, each rule-carrying one verified by trying to break it
+  in `psql`. Documents are versioned rather than edited: `lineage_id` groups
+  versions and a unique constraint on (lineage, version) means what somebody
+  approved stays readable. The row indexes what Git holds, and `git_commit`
+  must be a full sha because an ambiguous reference to approved text is
+  worthless. Idempotency is a unique index, so a retry cannot write a
+  duplicate issue into somebody's Jira regardless of whether a retry handler
+  is correct. Testing found a real gap: the `default=` values were Python-side
+  only, so any non-ORM writer hit NOT NULL — every status, position, version
+  and language column now has a server default. ADR-025 records the agreed
+  architecture and supersedes ADR-002 and ADR-022, amends ADR-014 and ADR-024,
+  and deletes the local-MCP plan the brief reversed. 53 new tests, 644 in all.
+
 - 2026-11-09 — Step 12 follow-up: verified end to end, and fixed what that
   found. `models.github.ai` is unreachable from the development sandbox — every
   request returns a four-byte `OK` with none of GitHub's headers — so the whole
